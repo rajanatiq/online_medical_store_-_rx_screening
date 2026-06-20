@@ -1,0 +1,428 @@
+/* =====================================================================
+   ONLINE MEDICAL STORE & Rx SCREENING — NEW FRESH DATABASE SCRIPT
+   Generated as per Project Requirements Document
+   - Rider system NOT included (delivery not in scope)
+   - Subscription system NOT included (auto-order not in scope)
+   - Online payment NOT modeled (counter payment only)
+   - 10 seed rows per major table, inserted in FK-safe order
+===================================================================== */
+
+/* =====================================================================
+   STEP 0 — CREATE DATABASE
+===================================================================== */
+
+CREATE DATABASE OnlineMedicalStore;
+GO
+
+USE OnlineMedicalStore;
+GO
+
+
+/* =====================================================================
+   STEP 1 — CREATE TABLES (in parent → child order)
+===================================================================== */
+
+-- ── Users (login identity for Customer / Store / SuperAdmin) ──────────
+CREATE TABLE [user] (
+    Id        INT IDENTITY(1,1) PRIMARY KEY,
+    email     VARCHAR(150) NOT NULL UNIQUE,
+    password  VARCHAR(250) NOT NULL,
+    Role      VARCHAR(50)  NOT NULL  -- 'Customer' | 'Store' | 'SuperAdmin'
+);
+GO
+
+-- ── Customer ────────────────────────────────────────────────────────
+CREATE TABLE customer (
+    c_id      INT PRIMARY KEY,         -- matches [user].Id
+    name      VARCHAR(150) NOT NULL,
+    email     VARCHAR(150) NOT NULL,
+    password  VARCHAR(250) NOT NULL,
+    contact   VARCHAR(20),
+    dob       DATE,
+    FOREIGN KEY (c_id) REFERENCES [user](Id)
+);
+GO
+
+-- ── Profiles (self / family member health profiles) ───────────────
+CREATE TABLE profiles (
+    id            INT IDENTITY(1,1) PRIMARY KEY,
+    cus_id        INT NOT NULL,
+    Fullname      VARCHAR(150) NOT NULL,
+    relation      VARCHAR(50)  NOT NULL,   -- 'Self','Spouse','Child','Parent',...
+    gender        VARCHAR(20),
+    contact       VARCHAR(20),
+    age           INT,
+    default_lat   FLOAT,
+    default_long  FLOAT,
+    Addres        VARCHAR(250),
+    is_active     BIT NOT NULL DEFAULT 1,
+    FOREIGN KEY (cus_id) REFERENCES customer(c_id)
+);
+GO
+
+-- ── Medical Store (pharmacy branch) ────────────────────────────────
+CREATE TABLE medicalstore (
+    store_id   INT PRIMARY KEY,        -- matches [user].Id
+    name       VARCHAR(150) NOT NULL,
+    email      VARCHAR(150) NOT NULL,
+    location   VARCHAR(250),
+    images     VARCHAR(250) NULL,
+    password   VARCHAR(250) NOT NULL,
+    latitude   FLOAT,
+    longitude  FLOAT,
+    FOREIGN KEY (store_id) REFERENCES [user](Id)
+);
+GO
+
+-- ── Medicine (per-store catalog) ───────────────────────────────────
+CREATE TABLE medicine (
+    med_id          INT IDENTITY(1,1) PRIMARY KEY,
+    store_id        INT NOT NULL,
+    name            VARCHAR(150) NOT NULL,
+    base_name       VARCHAR(150) NOT NULL,
+    price           DECIMAL(10,2) NOT NULL,
+    pills_per_pack  INT,
+    category        VARCHAR(100),
+    strength        VARCHAR(50),
+    FOREIGN KEY (store_id) REFERENCES medicalstore(store_id)
+);
+GO
+
+-- ── Medicine Batches (stock / expiry tracking) ─────────────────────
+CREATE TABLE medicine_batches (
+    id                       INT IDENTITY(1,1) PRIMARY KEY,
+    med_id                   INT NOT NULL,
+    batch_number             VARCHAR(100) NOT NULL,
+    total_pills              INT NOT NULL,
+    remaining_pills          INT NOT NULL,
+    expiry_date              DATETIME2 NOT NULL,
+    purchase_price_per_pack  DECIMAL(10,2),
+    FOREIGN KEY (med_id) REFERENCES medicine(med_id)
+);
+GO
+
+-- ── Prescriptions (uploaded Rx image per order context) ────────────
+CREATE TABLE prescriptions (
+    id         INT IDENTITY(1,1) PRIMARY KEY,
+    cust_id    INT NOT NULL,
+    profileid  INT NOT NULL,
+    location   VARCHAR(250),
+    rx_image   VARCHAR(250) NOT NULL,
+    FOREIGN KEY (cust_id) REFERENCES customer(c_id),
+    FOREIGN KEY (profileid) REFERENCES profiles(id)
+);
+GO
+
+-- ── Prescription Medicine (doctor's Rx lines, dosage split by time) ─
+CREATE TABLE prescription_medicine (
+    id               INT IDENTITY(1,1) PRIMARY KEY,
+    prescription_id  INT NOT NULL,
+    medicine_name    VARCHAR(150) NOT NULL,
+    potency          VARCHAR(50),
+    days             INT NOT NULL,
+    total_quantity   INT NOT NULL,
+    morning_pills    INT DEFAULT 0,
+    evening_pills    INT DEFAULT 0,
+    night_pills      INT DEFAULT 0,
+    FOREIGN KEY (prescription_id) REFERENCES prescriptions(id)
+);
+GO
+
+-- ── PHR (Personal Health Record — disease / current meds) ──────────
+CREATE TABLE phr (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    profile_id  INT NOT NULL,
+    entry_name  VARCHAR(150) NOT NULL,
+    category    VARCHAR(50) NOT NULL,  -- 'PastDisease' | 'AlreadyTakingMedicine'
+    FOREIGN KEY (profile_id) REFERENCES profiles(id)
+);
+GO
+
+-- ── Contraindication (drug safety rules engine) ────────────────────
+CREATE TABLE contraindication (
+    id         INT IDENTITY(1,1) PRIMARY KEY,
+    base_name  VARCHAR(150) NOT NULL,
+    disease    VARCHAR(150) NULL,
+    with_base  VARCHAR(150) NULL,
+    severity   VARCHAR(20) NOT NULL,  -- 'High' | 'Moderate'
+    message    VARCHAR(250) NOT NULL
+);
+GO
+
+-- ── Medlist (master reference list of known medicines) ─────────────
+CREATE TABLE medlist (
+    id            INT IDENTITY(1,1) PRIMARY KEY,
+    medicne_name  VARCHAR(250) NOT NULL,
+    base_name     VARCHAR(250) NOT NULL,
+    potency       VARCHAR(250),
+    category      VARCHAR(250)
+);
+GO
+
+-- ── Orders (one order per pickup transaction) ──────────────────────
+CREATE TABLE orders (
+    id           INT IDENTITY(1,1) PRIMARY KEY,
+    cust_id      INT NOT NULL,
+    profile_id   INT NOT NULL,
+    store_id     INT NOT NULL,
+    status       VARCHAR(30) NOT NULL DEFAULT 'Pending',
+        -- 'Pending' | 'Prescription Verified' | 'Ready for Pickup' | 'Completed' | 'Rejected'
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    order_date   DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    FOREIGN KEY (cust_id) REFERENCES customer(c_id),
+    FOREIGN KEY (profile_id) REFERENCES profiles(id),
+    FOREIGN KEY (store_id) REFERENCES medicalstore(store_id)
+);
+GO
+
+-- ── Order Items (medicines within an order) ─────────────────────────
+CREATE TABLE order_items (
+    id         INT IDENTITY(1,1) PRIMARY KEY,
+    order_id   INT NOT NULL,
+    med_id     INT NOT NULL,
+    quantity   INT NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id),
+    FOREIGN KEY (med_id) REFERENCES medicine(med_id)
+);
+GO
+
+-- ── Store Rating (customer feedback after pickup) ───────────────────
+CREATE TABLE Store_Rating (
+    id         INT IDENTITY(1,1) PRIMARY KEY,
+    store_id   INT NOT NULL,
+    user_id    INT NOT NULL,
+    rating     INT NOT NULL,           -- 1 to 5
+    review     NVARCHAR(500),
+    created_at DATETIME NOT NULL DEFAULT GETDATE(),
+    FOREIGN KEY (store_id) REFERENCES medicalstore(store_id),
+    FOREIGN KEY (user_id) REFERENCES [user](Id)
+);
+GO
+
+PRINT '>>> All tables created successfully (Rider & Subscriptions excluded per requirements)';
+GO
+
+
+/* =====================================================================
+   STEP 2 — SEED DATA (10 rows per table, FK order respected)
+===================================================================== */
+
+-- ── Users: 5 Customers (Id 1-5) + 5 Stores (Id 6-10) ───────────────
+INSERT INTO [user] (email, password, Role) VALUES
+    ('ali@test.com',     '1234', 'Customer'),  -- Id 1
+    ('sara@test.com',    '1234', 'Customer'),  -- Id 2
+    ('bilal@test.com',   '1234', 'Customer'),  -- Id 3
+    ('hina@test.com',    '1234', 'Customer'),  -- Id 4
+    ('zeeshan@test.com', '1234', 'Customer'),  -- Id 5
+    ('store1@test.com',  '1234', 'Store'),      -- Id 6
+    ('store2@test.com',  '1234', 'Store'),      -- Id 7
+    ('store3@test.com',  '1234', 'Store'),      -- Id 8
+    ('store4@test.com',  '1234', 'Store'),      -- Id 9
+    ('store5@test.com',  '1234', 'Store');      -- Id 10
+GO
+
+-- ── Customers (c_id matches user.Id 1-5) ───────────────────────────
+INSERT INTO customer (c_id, name, email, password, contact, dob) VALUES
+    (1, 'Ali Hassan',      'ali@test.com',     '1234', '03001234567', '1995-05-10'),
+    (2, 'Sara Ahmed',      'sara@test.com',    '1234', '03007654321', '1998-02-15'),
+    (3, 'Bilal Khan',      'bilal@test.com',   '1234', '03211122334', '1990-11-23'),
+    (4, 'Hina Malik',      'hina@test.com',    '1234', '03331231231', '2000-07-01'),
+    (5, 'Zeeshan Tariq',   'zeeshan@test.com', '1234', '03451239876', '1985-09-30');
+GO
+
+-- ── Profiles (10 rows — each customer has self + one family profile) ─
+INSERT INTO profiles (cus_id, Fullname, relation, gender, contact, age, default_lat, default_long, Addres, is_active) VALUES
+    (1, 'Ali Hassan',      'Self',   'Male',   '03001234567', 29, 33.6844, 73.0479, 'F-10, Islamabad',        1),  -- id 1
+    (1, 'Ahmed Hassan',    'Father', 'Male',   '03001234500', 58, 33.6844, 73.0479, 'F-10, Islamabad',        1),  -- id 2
+    (2, 'Sara Ahmed',      'Self',   'Female', '03007654321', 27, 33.7000, 73.0500, 'G-9, Islamabad',         1),  -- id 3
+    (2, 'Maria Ahmed',     'Sister', 'Female', '03007654322', 22, 33.7000, 73.0500, 'G-9, Islamabad',         1),  -- id 4
+    (3, 'Bilal Khan',      'Self',   'Male',   '03211122334', 35, 33.5984, 73.0376, 'Murree Road, Rawalpindi',1),  -- id 5
+    (3, 'Sana Khan',       'Wife',   'Female', '03211122335', 32, 33.5984, 73.0376, 'Murree Road, Rawalpindi',1),  -- id 6
+    (4, 'Hina Malik',      'Self',   'Female', '03331231231', 25, 33.6500, 73.1000, 'F-7 Markaz, Islamabad',  1),  -- id 7
+    (4, 'Imran Malik',     'Father', 'Male',   '03331231200', 60, 33.6500, 73.1000, 'F-7 Markaz, Islamabad',  1),  -- id 8
+    (5, 'Zeeshan Tariq',   'Self',   'Male',   '03451239876', 40, 33.6100, 73.0700, 'Mall Road, Rawalpindi',  1),  -- id 9
+    (5, 'Noor Tariq',      'Daughter','Female','03451239800', 10, 33.6100, 73.0700, 'Mall Road, Rawalpindi',  1);  -- id 10
+GO
+
+-- ── Medical Stores (store_id matches user.Id 6-10, only 5 stores exist) ─
+INSERT INTO medicalstore (store_id, name, email, location, images, password, latitude, longitude) VALUES
+    (6,  'HealthPlus Pharmacy',     'store1@test.com', 'G-9 Markaz, Islamabad',      NULL, '1234', 33.6938, 73.0652),
+    (7,  'Shaheen Chemist - F10',   'store2@test.com', 'F-10 Markaz, Islamabad',     NULL, '1234', 33.6844, 73.0479),
+    (8,  'D-Watson - Mall Road',    'store3@test.com', 'Mall Road, Rawalpindi',      NULL, '1234', 33.6100, 73.0700),
+    (9,  'Shaheen Chemist - F7',    'store4@test.com', 'F-7 Markaz, Islamabad',      NULL, '1234', 33.6500, 73.1000),
+    (10, 'D-Watson - Murree Road',  'store5@test.com', 'Murree Road, Rawalpindi',    NULL, '1234', 33.5984, 73.0376);
+GO
+
+-- ── Medicines (10 rows across the 5 stores) ────────────────────────
+INSERT INTO medicine (store_id, name, base_name, price, pills_per_pack, category, strength) VALUES
+    (6,  'Panadol 500mg',  'Paracetamol',  120, 20, 'Analgesic',   '500mg'),   -- med_id 1
+    (6,  'Amoxil 250mg',   'Amoxicillin',  200, 14, 'Antibiotic',  '250mg'),   -- med_id 2
+    (7,  'Brufen 400mg',   'Ibuprofen',    150, 10, 'Analgesic',   '400mg'),   -- med_id 3
+    (7,  'Augmentin 625mg','Amoxicillin + Clavulanic Acid', 350, 14, 'Antibiotic', '625mg'), -- med_id 4
+    (8,  'Glucophage 500mg','Metformin',   180, 20, 'Diabetes',    '500mg'),   -- med_id 5
+    (8,  'Lipitor 20mg',   'Atorvastatin', 400, 14, 'Cholesterol', '20mg'),    -- med_id 6
+    (9,  'Cetirizine 10mg','Cetirizine',    80, 10, 'Antihistamine','10mg'),   -- med_id 7
+    (9,  'Aspirin 75mg',   'Acetylsalicylic Acid', 60, 28, 'Cardiovascular', '75mg'), -- med_id 8
+    (10, 'Omeprazole 20mg','Omeprazole',   140, 14, 'Gastrointestinal','20mg'),-- med_id 9
+    (10, 'Ventolin Inhaler','Salbutamol',  450,  1, 'Respiratory', '100mcg'); -- med_id 10
+GO
+
+-- ── Medicine Batches (10 rows — stock tracking) ─────────────────────
+INSERT INTO medicine_batches (med_id, batch_number, total_pills, remaining_pills, expiry_date, purchase_price_per_pack) VALUES
+    (1,  'BATCH-PAR-001', 200, 200, '2026-12-31', 90.00),
+    (1,  'BATCH-PAR-002', 100, 100, '2027-06-30', 88.00),
+    (2,  'BATCH-AMX-001', 140, 140, '2026-10-15', 160.00),
+    (3,  'BATCH-IBU-001', 100, 100, '2026-09-01', 120.00),
+    (4,  'BATCH-AUG-001',  70,  70, '2026-11-20', 280.00),
+    (5,  'BATCH-MET-001', 200, 200, '2027-01-10', 140.00),
+    (6,  'BATCH-ATO-001', 140, 140, '2026-08-05', 320.00),
+    (7,  'BATCH-CET-001', 100, 100, '2027-03-15', 60.00),
+    (8,  'BATCH-ASP-001', 280, 280, '2027-02-28', 45.00),
+    (9,  'BATCH-OME-001', 140, 140, '2026-12-01', 110.00);
+GO
+
+-- ── Prescriptions (10 rows) ─────────────────────────────────────────
+INSERT INTO prescriptions (cust_id, profileid, location, rx_image) VALUES
+    (1, 1,  'F-10, Islamabad',         '/prescriptions/rx1.jpg'),   -- id 1
+    (1, 2,  'F-10, Islamabad',         '/prescriptions/rx2.jpg'),   -- id 2
+    (2, 3,  'G-9, Islamabad',          '/prescriptions/rx3.jpg'),   -- id 3
+    (2, 4,  'G-9, Islamabad',          '/prescriptions/rx4.jpg'),   -- id 4
+    (3, 5,  'Murree Road, Rawalpindi', '/prescriptions/rx5.jpg'),   -- id 5
+    (3, 6,  'Murree Road, Rawalpindi', '/prescriptions/rx6.jpg'),   -- id 6
+    (4, 7,  'F-7 Markaz, Islamabad',   '/prescriptions/rx7.jpg'),   -- id 7
+    (4, 8,  'F-7 Markaz, Islamabad',   '/prescriptions/rx8.jpg'),   -- id 8
+    (5, 9,  'Mall Road, Rawalpindi',   '/prescriptions/rx9.jpg'),   -- id 9
+    (5, 10, 'Mall Road, Rawalpindi',   '/prescriptions/rx10.jpg');  -- id 10
+GO
+
+-- ── Prescription Medicines (10 rows — dosage split by time of day) ──
+INSERT INTO prescription_medicine (prescription_id, medicine_name, potency, days, total_quantity, morning_pills, evening_pills, night_pills) VALUES
+    (1,  'Paracetamol',   '500mg', 5, 15, 1, 1, 1),
+    (1,  'Amoxicillin',   '250mg', 7, 14, 1, 0, 1),
+    (2,  'Ibuprofen',     '400mg', 5, 10, 1, 0, 1),
+    (3,  'Metformin',     '500mg', 30, 60, 1, 0, 1),
+    (4,  'Atorvastatin',  '20mg', 30, 30, 0, 0, 1),
+    (5,  'Cetirizine',    '10mg', 7, 7, 0, 0, 1),
+    (6,  'Aspirin',       '75mg', 30, 30, 1, 0, 0),
+    (7,  'Omeprazole',    '20mg', 14, 14, 1, 0, 0),
+    (8,  'Amoxicillin',   '250mg', 7, 21, 1, 1, 1),
+    (9,  'Ibuprofen',     '400mg', 3, 9, 1, 1, 1);
+GO
+
+-- ── PHR — Personal Health Records (10 rows) ─────────────────────────
+INSERT INTO phr (profile_id, entry_name, category) VALUES
+    (1,  'Diabetes',         'PastDisease'),
+    (1,  'Metformin',        'AlreadyTakingMedicine'),
+    (2,  'Hypertension',     'PastDisease'),
+    (3,  'Asthma',           'PastDisease'),
+    (3,  'Ventolin Inhaler', 'AlreadyTakingMedicine'),
+    (5,  'Kidney Disease',   'PastDisease'),
+    (6,  'Penicillin Allergy','PastDisease'),
+    (7,  'Pregnancy',        'PastDisease'),
+    (9,  'Bleeding Disorders','PastDisease'),
+    (9,  'Warfarin',         'AlreadyTakingMedicine');
+GO
+
+-- ── Contraindications — drug safety rules (10 rows) ──────────────────
+INSERT INTO contraindication (base_name, disease, with_base, severity, message) VALUES
+    ('Metformin',     'Kidney Disease',     NULL,                'High',     'Use with caution in kidney disease'),
+    ('Metformin',     NULL,                 'Ibuprofen',         'Moderate', 'Risk of lactic acidosis'),
+    ('Amoxicillin',   'Penicillin Allergy', NULL,                'High',     'Contraindicated in penicillin allergy'),
+    ('Aspirin',       'Bleeding Disorders', NULL,                'High',     'Risk of serious bleeding'),
+    ('Aspirin',       NULL,                 'Ibuprofen',         'Moderate', 'GI bleeding risk when combined'),
+    ('Lisinopril',    'Pregnancy',          NULL,                'High',     'Avoid during pregnancy'),
+    ('Omeprazole',    NULL,                 'Clopidogrel',       'Moderate', 'Reduces Clopidogrel effectiveness'),
+    ('Levothyroxine', NULL,                 'Calcium Carbonate', 'Moderate', 'Take 4 hours apart'),
+    ('Ibuprofen',     'Asthma',             NULL,                'Moderate', 'May trigger bronchospasm'),
+    ('Warfarin',      NULL,                 'Aspirin',           'High',     'Increased bleeding risk when combined');
+GO
+
+-- ── Medlist — master reference catalog (10 rows) ─────────────────────
+INSERT INTO medlist (medicne_name, base_name, potency, category) VALUES
+    ('Panadol',    'Paracetamol',                  '500mg',  'Pain Relief'),
+    ('Brufen',     'Ibuprofen',                     '400mg',  'Pain Relief'),
+    ('Aspirin',    'Acetylsalicylic Acid',          '75mg',   'Cardiovascular'),
+    ('Augmentin',  'Amoxicillin + Clavulanic Acid', '625mg',  'Antibiotic'),
+    ('Amoxil',     'Amoxicillin',                   '500mg',  'Antibiotic'),
+    ('Zithromax',  'Azithromycin',                  '500mg',  'Antibiotic'),
+    ('Cetirizine', 'Cetirizine',                     '10mg',   'Antihistamine'),
+    ('Glucophage', 'Metformin',                     '500mg',  'Diabetes'),
+    ('Lipitor',    'Atorvastatin',                  '20mg',   'Cholesterol'),
+    ('Omeprazole', 'Omeprazole',                    '20mg',   'Gastrointestinal');
+GO
+
+-- ── Orders (10 rows — counter pickup orders, no delivery/payment) ────
+INSERT INTO orders (cust_id, profile_id, store_id, status, total_amount, order_date) VALUES
+    (1, 1,  6,  'Completed',           320.00, '2026-05-01'),
+    (1, 2,  6,  'Ready for Pickup',    120.00, '2026-05-10'),
+    (2, 3,  7,  'Prescription Verified',150.00, '2026-05-12'),
+    (2, 4,  7,  'Pending',             350.00, '2026-05-15'),
+    (3, 5,  8,  'Completed',           180.00, '2026-05-02'),
+    (3, 6,  8,  'Rejected',            400.00, '2026-05-03'),
+    (4, 7,  9,  'Ready for Pickup',     80.00, '2026-05-18'),
+    (4, 8,  9,  'Completed',            60.00, '2026-05-05'),
+    (5, 9,  10, 'Pending',             140.00, '2026-05-20'),
+    (5, 10, 10, 'Completed',           450.00, '2026-05-06');
+GO
+
+-- ── Order Items (10 rows — medicines per order) ───────────────────────
+INSERT INTO order_items (order_id, med_id, quantity, unit_price) VALUES
+    (1,  1, 1, 120.00),
+    (1,  2, 1, 200.00),
+    (2,  1, 1, 120.00),
+    (3,  3, 1, 150.00),
+    (4,  4, 1, 350.00),
+    (5,  5, 1, 180.00),
+    (6,  6, 1, 400.00),
+    (7,  7, 1,  80.00),
+    (8,  8, 1,  60.00),
+    (9,  9, 1, 140.00);
+GO
+
+-- ── Store Ratings (10 rows — customer feedback after pickup) ─────────
+INSERT INTO Store_Rating (store_id, user_id, rating, review, created_at) VALUES
+    (6,  1, 5, 'Quick service, friendly staff',        '2026-05-01'),
+    (6,  2, 4, 'Good stock availability',               '2026-05-11'),
+    (7,  2, 3, 'Had to wait a bit longer than usual',   '2026-05-12'),
+    (7,  3, 4, 'Decent experience overall',             '2026-05-15'),
+    (8,  3, 5, 'Excellent pharmacist, very helpful',    '2026-05-02'),
+    (8,  4, 2, 'Prescription rejected without clear reason','2026-05-03'),
+    (9,  4, 5, 'Always have what I need',               '2026-05-18'),
+    (9,  5, 4, 'Clean store, polite staff',              '2026-05-05'),
+    (10, 5, 3, 'Average, nothing special',               '2026-05-20'),
+    (10, 1, 5, 'Best branch in Rawalpindi',               '2026-05-06');
+GO
+
+PRINT '>>> All seed data inserted successfully (10 rows per table)';
+GO
+
+
+/* =====================================================================
+   STEP 3 — VERIFY EVERYTHING
+===================================================================== */
+
+SELECT 'user'                   AS [Table], COUNT(*) AS [Rows] FROM [user]
+UNION ALL SELECT 'customer',               COUNT(*) FROM customer
+UNION ALL SELECT 'profiles',               COUNT(*) FROM profiles
+UNION ALL SELECT 'medicalstore',           COUNT(*) FROM medicalstore
+UNION ALL SELECT 'medicine',               COUNT(*) FROM medicine
+UNION ALL SELECT 'medicine_batches',       COUNT(*) FROM medicine_batches
+UNION ALL SELECT 'prescriptions',          COUNT(*) FROM prescriptions
+UNION ALL SELECT 'prescription_medicine',  COUNT(*) FROM prescription_medicine
+UNION ALL SELECT 'phr',                    COUNT(*) FROM phr
+UNION ALL SELECT 'contraindication',       COUNT(*) FROM contraindication
+UNION ALL SELECT 'medlist',                COUNT(*) FROM medlist
+UNION ALL SELECT 'orders',                 COUNT(*) FROM orders
+UNION ALL SELECT 'order_items',            COUNT(*) FROM order_items
+UNION ALL SELECT 'Store_Rating',           COUNT(*) FROM Store_Rating;
+GO
+
+-- Key IDs your APIs will use:
+SELECT Id, email, Role FROM [user];
+SELECT id, cus_id, Fullname FROM profiles;
+SELECT med_id, name, base_name, store_id FROM medicine;
+SELECT store_id, name, location FROM medicalstore;
+
+PRINT '>>> Script completed successfully';
+GO
