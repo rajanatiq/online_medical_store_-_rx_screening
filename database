@@ -426,3 +426,4 @@ SELECT store_id, name, location FROM medicalstore;
 
 PRINT '>>> Script completed successfully';
 GO
+
