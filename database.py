@@ -35,3 +35,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+from sqlalchemy import text
+
+if __name__ == "__main__":
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text("SELECT @@VERSION"))
+            print("✅ Database Connected Successfully!")
+            print(result.scalar())
+    except Exception as e:
+        print("❌ Database Connection Failed!")
+        print(e)
