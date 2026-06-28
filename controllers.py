@@ -1,16 +1,4 @@
-"""
-controllers.py
-==============
-Business logic aur DB operations for: Online Medical Store & Rx Screening
-Har function ek SQLAlchemy Session (db) leta hai pehle parameter ke tor pe.
 
-FIXES & ADDITIONS in this version:
-    - register_customer(): unified User+Customer registration (ek transaction)
-    - get_nearby_stores(): Haversine formula se lat/long distance calculate karta hai
-    - get_stores_by_chain(): chain_name se branches filter karta hai
-    - update_prescription_status(): Staff ke liye Rx approve/reject
-    - create_order(): prescription_id optional support added
-"""
 
 import math
 from datetime import datetime, timedelta
@@ -53,7 +41,7 @@ def create_access_token(data: dict) -> str:
 def authenticate_user(db: Session, email: str, password: str) -> models.User:
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
-        raise HTTPException(status_code=401, detail="Email ya password galat hai")
+        raise HTTPException(status_code=401, detail="Wrong Email or Password")
 
     # Password verify karo:
     # - Production mein bcrypt hash hota hai → verify_password() use hoti hai
@@ -66,7 +54,7 @@ def authenticate_user(db: Session, email: str, password: str) -> models.User:
         password_ok = (password == user.password)
 
     if not password_ok:
-        raise HTTPException(status_code=401, detail="Email ya password galat hai")
+        raise HTTPException(status_code=401, detail="Wrong Email or password")
 
     return user
 
@@ -78,7 +66,7 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
     # check karo email pehle se registered toh nahi
     existing = db.query(models.User).filter(models.User.email == user.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Yeh email pehle se registered hai")
+        raise HTTPException(status_code=400, detail="This Email is already Registered")
 
     new_user = models.User(
         email=user.email,
@@ -94,7 +82,7 @@ def create_user(db: Session, user: schemas.UserCreate) -> models.User:
 def get_user(db: Session, user_id: int) -> models.User:
     user = db.query(models.User).filter(models.User.Id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User nahi mila")
+        raise HTTPException(status_code=404, detail="User not Found")
     return user
 
 
@@ -126,7 +114,7 @@ def register_customer(db: Session, data: schemas.CustomerRegister) -> dict:
     # Step 1: duplicate email check
     existing = db.query(models.User).filter(models.User.email == data.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Yeh email pehle se registered hai")
+        raise HTTPException(status_code=400, detail="This Email is already registered")
 
     try:
         # Step 2: User banao
@@ -159,7 +147,7 @@ def register_customer(db: Session, data: schemas.CustomerRegister) -> dict:
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Registration fail ho gayi: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Registration Failed: {str(e)}")
 
 
 # =====================================================================
@@ -169,7 +157,7 @@ def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Cus
     # linked user exist karta hai aur role Customer hai
     user = get_user(db, customer.c_id)
     if user.Role != "Customer":
-        raise HTTPException(status_code=400, detail="Linked user ka role Customer nahi hai")
+        raise HTTPException(status_code=400, detail="Linked User Role is not a Customer")
 
     new_customer = models.Customer(
         c_id=customer.c_id,
@@ -188,7 +176,7 @@ def create_customer(db: Session, customer: schemas.CustomerCreate) -> models.Cus
 def get_customer(db: Session, c_id: int) -> models.Customer:
     customer = db.query(models.Customer).filter(models.Customer.c_id == c_id).first()
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer nahi mila")
+        raise HTTPException(status_code=404, detail="Customer Not Found")
     return customer
 
 
@@ -229,7 +217,7 @@ def create_profile(db: Session, profile: schemas.ProfileCreate) -> models.Profil
 def get_profile(db: Session, profile_id: int) -> models.Profile:
     profile = db.query(models.Profile).filter(models.Profile.id == profile_id).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="Profile nahi mili")
+        raise HTTPException(status_code=404, detail="Profile not Found")
     return profile
 
 
@@ -263,7 +251,7 @@ def delete_profile(db: Session, profile_id: int) -> None:
 def create_medicalstore(db: Session, store: schemas.MedicalStoreCreate) -> models.MedicalStore:
     user = get_user(db, store.store_id)
     if user.Role != "Store":
-        raise HTTPException(status_code=400, detail="Linked user ka role Store nahi hai")
+        raise HTTPException(status_code=400, detail="Linked user role is not a Store")
 
     new_store = models.MedicalStore(
         store_id=store.store_id,
@@ -285,7 +273,7 @@ def create_medicalstore(db: Session, store: schemas.MedicalStoreCreate) -> model
 def get_medicalstore(db: Session, store_id: int) -> models.MedicalStore:
     store = db.query(models.MedicalStore).filter(models.MedicalStore.store_id == store_id).first()
     if not store:
-        raise HTTPException(status_code=404, detail="Medical store nahi mila")
+        raise HTTPException(status_code=404, detail="Medical Store not found")
     return store
 
 
@@ -450,7 +438,7 @@ def create_medicine_batch(db: Session, batch: schemas.MedicineBatchCreate) -> mo
 def get_medicine_batch(db: Session, batch_id: int) -> models.MedicineBatch:
     batch = db.query(models.MedicineBatch).filter(models.MedicineBatch.id == batch_id).first()
     if not batch:
-        raise HTTPException(status_code=404, detail="Medicine batch nahi mili")
+        raise HTTPException(status_code=404, detail="Medicine Batchnot found")
     return batch
 
 
@@ -482,7 +470,7 @@ def reduce_batch_stock(db: Session, med_id: int, quantity: int) -> None:
         remaining -= deduct
 
     if remaining > 0:
-        raise HTTPException(status_code=400, detail="Stock available nahi hai")
+        raise HTTPException(status_code=400, detail="Stock not Available")
 
     db.commit()
 
@@ -512,7 +500,7 @@ def get_prescription(db: Session, prescription_id: int) -> models.Prescription:
         models.Prescription.id == prescription_id
     ).first()
     if not prescription:
-        raise HTTPException(status_code=404, detail="Prescription nahi mili")
+        raise HTTPException(status_code=404, detail="Prescription not found")
     return prescription
 
 
@@ -572,7 +560,7 @@ def delete_prescription_medicine(db: Session, pm_id: int) -> None:
         models.PrescriptionMedicine.id == pm_id
     ).first()
     if not pm:
-        raise HTTPException(status_code=404, detail="Prescription medicine entry nahi mili")
+        raise HTTPException(status_code=404, detail="Prescription medicine entry not Found")
     db.delete(pm)
     db.commit()
 
@@ -597,7 +585,7 @@ def get_phr_by_profile(db: Session, profile_id: int) -> List[models.PHR]:
 def delete_phr_entry(db: Session, phr_id: int) -> None:
     phr = db.query(models.PHR).filter(models.PHR.id == phr_id).first()
     if not phr:
-        raise HTTPException(status_code=404, detail="PHR entry nahi mili")
+        raise HTTPException(status_code=404, detail="PHR entry not Found")
     db.delete(phr)
     db.commit()
 
@@ -622,7 +610,7 @@ def delete_contraindication(db: Session, rule_id: int) -> None:
         models.Contraindication.id == rule_id
     ).first()
     if not rule:
-        raise HTTPException(status_code=404, detail="Contraindication rule nahi mila")
+        raise HTTPException(status_code=404, detail="Contraindication rule not Found")
     db.delete(rule)
     db.commit()
 
@@ -717,7 +705,7 @@ def search_medlist(db: Session, query: str) -> List[models.MedList]:
 def delete_medlist_entry(db: Session, entry_id: int) -> None:
     entry = db.query(models.MedList).filter(models.MedList.id == entry_id).first()
     if not entry:
-        raise HTTPException(status_code=404, detail="Medlist entry nahi mili")
+        raise HTTPException(status_code=404, detail="Medlist entry not Found")
     db.delete(entry)
     db.commit()
 
@@ -744,7 +732,7 @@ def create_order(
         get_prescription(db, order.prescription_id)
 
     if not items:
-        raise HTTPException(status_code=400, detail="Order mein kam az kam ek item hona chahiye")
+        raise HTTPException(status_code=400, detail="There should be atleast on item in Order")
 
     # Order banao
     new_order = models.Order(
@@ -779,7 +767,7 @@ def create_order(
 def get_order(db: Session, order_id: int) -> models.Order:
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Order nahi mila")
+        raise HTTPException(status_code=404, detail="Order not Found")
     return order
 
 
@@ -829,7 +817,7 @@ def get_order_items(db: Session, order_id: int) -> List[models.OrderItem]:
 def delete_order_item(db: Session, item_id: int) -> None:
     item = db.query(models.OrderItem).filter(models.OrderItem.id == item_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Order item nahi mila")
+        raise HTTPException(status_code=404, detail="Order item not Found")
     db.delete(item)
     db.commit()
 
@@ -867,6 +855,6 @@ def delete_store_rating(db: Session, rating_id: int) -> None:
         models.StoreRating.id == rating_id
     ).first()
     if not rating:
-        raise HTTPException(status_code=404, detail="Rating nahi mili")
+        raise HTTPException(status_code=404, detail="Rating not found")
     db.delete(rating)
     db.commit()

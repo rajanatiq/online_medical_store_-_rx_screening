@@ -404,10 +404,6 @@ class StoreRatingOut(StoreRatingBase):
 # NEARBY STORES REQUEST
 # =====================================================================
 class NearbyStoresRequest(BaseModel):
-    """
-    Customer ke lat/long se nearest branches dhundne ke liye.
-    radius_km default: 10 km
-    """
     lat: float
     long: float
     radius_km: float = 10.0
